@@ -1,7 +1,7 @@
 import {Client as NotionClient} from "npm:@notionhq/client"
-import { Client as DiscordClient, GatewayIntentBits, Message, TextChannel } from 'npm:discord.js';
+import { Client as DiscordClient, GatewayIntentBits, Message, MessageReaction, TextChannel, User } from 'npm:discord.js';
 import "jsr:@std/dotenv/load";
-import { Db, type DatabaseEntry } from "./db.ts";
+import {Db, type DatabaseEntry, Progress, type Rating} from "./db.ts";
 const notion = new NotionClient({
     auth: Deno.env.get("NOTION_TOKEN"),
 })
@@ -73,42 +73,42 @@ async function cacheAllMessages(channel: TextChannel) {
 }
 let options = [
     {
-        name: "plan-to-watch",
+        name: "Plan to watch",
         category: "progress",
         emoji: "👍",
     },
     {
-        name: "watching",
+        name: "In progress",
         category: "progress",
         emoji: "😂",
     },
     {
-        name: "done",
+        name: "Done",
         category: "progress",
         emoji: "🎉",
     },
     {
-        name: "s",
+        name: "S",
         category: "rating",
         emoji: "🇸",//F emoji
     },
     {
-        name: "a",
+        name: "A",
         category: "rating",
         emoji: "🇦",//E emoji
     },
     {
-        name: "b",
+        name: "B",
         category: "rating",
         emoji: "🇧",//D emoji
     },
     {
-        name: "d",
+        name: "D",
         category: "rating",
         emoji: "🇩",//C emoji
     },
     {
-        name: "f",
+        name: "F",
         category: "rating",
         emoji: "🇫",//B emoji
     }
@@ -119,7 +119,16 @@ client.on("messageCreate", async (message) => {
 
     if (!channelIds.includes(message.channelId)) return;
     try {
-        // Add each reaction to the message
+        let newItem: DatabaseEntry = {
+            Name: message.content,
+            Priority: "Low",
+            Progress: "Plan to watch",
+        }
+        await db.addItemToDatabase(newItem);
+    } catch (error) {
+        console.error('Failed to add item to database:', error);
+    }
+    try {
         for (const opt of options) {
             await message.react(opt.emoji);
         }
@@ -127,34 +136,62 @@ client.on("messageCreate", async (message) => {
         console.error('Failed to add reactions:', error);
     }
 })
+let selectedProgress: Progress = "Plan to watch";
+async function removeEmoji(message: Message, option: { name: string, category: string, emoji: string }, user: User) {
+    let reactions = message.reactions.cache;
+    reactions.forEach(reaction => {
+        if (option.emoji === reaction.emoji.name) {
+            reaction.users.remove(user.id);
+        }
 
-async function setProgress(option: { name: string, category: string, emoji: string }, message: Message) {
-
+    })
 }
-async function setRating(option: { name: string, category: string, emoji: string }, message: Message) {
+async function setProgress(option: { name: string, category: string, emoji: string,}, message: Message, reaction: MessageReaction, user: User ) {
+    let reactions = message.reactions.cache;
+    // let dbEntry = await db.getEntryByName(message.content);
+    selectedProgress = <Progress> option.name;
+    await db.updateEntryByName(message.content, { Progress: selectedProgress });
 
+    reactions.forEach(reaction => {
+        if (option.emoji !== reaction.emoji.name) {
+            let opt = options.find(opt => opt.emoji === reaction.emoji.name);
+            if (opt && opt.category !== "progress") {
+                return
+            }
+            console.log("remov progress emoji")
+            reaction.users.remove(user.id);
+        }
+    })
+}
+
+async function setRating(option: { name: string, category: string, emoji: string }, message: Message, reaction: MessageReaction, user: User) {
+    let reactions = message.reactions.cache;
+    await db.updateEntryByName(message.content, { Rating: <Rating> option.name });
+    reactions.forEach(reaction => {
+        if (option.emoji !== reaction.emoji.name) {
+            let opt = options.find(opt => opt.emoji === reaction.emoji.name);
+            if (opt && opt.category !== "rating") {
+                return
+            }
+            console.log("remov rating emoji")
+            reaction.users.remove(user.id);
+        }
+    })
 }
 client.on('messageReactionAdd',async (reaction, user) => {
     if (user.bot) return;
     try {
+        if (client.user)
+        if (!reaction.users.cache.hasAny(client.user.id)) return;
         let clickedEmoji = reaction.emoji.name;
         let option = options.find(option => option.emoji === clickedEmoji);
         const message = await reaction.message.fetch();
         if (option && option.category === "progress") {
-            await setProgress(option, message);
+            await setProgress(option, message, <MessageReaction>reaction, <User>user);
         }else if (option && option.category === "rating") {
-            await setRating(option, message);
+            await setRating(option, message, <MessageReaction>reaction, <User>user);
         }
 
-        // Get all reactions on this message
-        const reactions = message.reactions.cache;
-
-        // Log the reactions on the message
-        reactions.forEach(reaction => {
-            console.log(`Emoji: ${reaction.emoji.name}, Count: ${reaction.count}, User: ${reaction.users.cache.first()?.tag}`);
-        });
-        // await reaction.users.remove(user.id);
-        console.log(`${user.tag} added reaction: ${reaction.emoji.name} to message: ${message.id}`);
     } catch (error) {
         console.error('Error fetching reactions:', error);
     }
