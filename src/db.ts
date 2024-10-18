@@ -1,4 +1,4 @@
-import { Client as NotionClient } from "npm:@notionhq/client";
+import { Client as NotionClient } from "@notionhq/client";
 
 export class Db {
     private notion: NotionClient;
